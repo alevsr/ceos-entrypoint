@@ -1,0 +1,15 @@
+[Unit]
+Description=cEOS-Entrypoint: prepare container
+DefaultDependencies=no
+Before=sysinit.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+PassEnvironment=HOSTNAME
+#StandardOutput=journal+console
+ExecStart=/ceos-entrypoint.py prepare_container
+
+[Install]
+WantedBy=sysinit.target

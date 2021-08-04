@@ -1,0 +1,12 @@
+[Unit]
+Description=cEOS-Entrypoint: start CLI on init stdio
+After=EosStage3.service
+Wants=EosStage3.service
+
+[Service]
+Type=idle
+PassEnvironment=HOSTNAME TERM HOME
+ExecStart=/ceos-entrypoint.py run_cli_on_pid1_stdio
+
+[Install]
+WantedBy=default.target
