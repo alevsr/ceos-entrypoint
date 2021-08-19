@@ -1,0 +1,24 @@
+# Works but prints ugly messages on respawn
+[Unit]
+Description=Start CLI on console
+DefaultDependencies=no
+Wants=EosStage3.service
+Requires=sysinit.target
+After=sysinit.target basic.target EosStage3.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=idle
+PassEnvironment=HOSTNAME TERM HOME
+RestartSec=0.5
+Restart=always
+StandardInput=tty-force
+StandardOutput=tty
+#TTYPath=/dev/console
+ExecStart=-/usr/bin/Cli -p 15
+StartLimitBurst=200
+StartLimitInterval=300s
+
+[Install]
+WantedBy=default.target
