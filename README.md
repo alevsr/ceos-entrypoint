@@ -70,6 +70,10 @@ This will build an image tagged twice: one with the version
 The built image can be used directly in GNS3 without setting any environment
 variable.
 
+## How to use in GNS3
+
+See [the dedicated doc (gns3.md)](gns3.md).
+
 ## Misc
 
 ### Notes
