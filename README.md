@@ -19,7 +19,7 @@ docker create \
   -e ETBA=1 \
   -e SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1 \
   -e container=docker \
-  ceosimage:4.26.1F \
+  ceosimage:4.27.0F \
   /sbin/init \
     systemd.setenv=CEOS=1 \
     systemd.setenv=EOS_PLATFORM=ceoslab \
@@ -55,7 +55,7 @@ To build the image, place the cEOS `tar` file from Arista in the build context
 ```sh
 CEOS_64=64  # or `CEOS_64=` for the 32bit variant
 CEOS_EDITION=lab
-CEOS_VERSION=4.26.1F
+CEOS_VERSION=4.27.0F
 docker build \
   --build-arg "CEOS_64=${CEOS_64}" \
   --build-arg "CEOS_EDITION=${CEOS_EDITION}" \
@@ -65,7 +65,7 @@ docker build \
 ```
 
 This will build an image tagged twice: one with the version
-(`arista-ceos:lab64-4.26.1F` here) and one latest (`arista-ceos:latest`).
+(`arista-ceos:lab64-4.27.0F` here) and one latest (`arista-ceos:latest`).
 
 The built image can be used directly in GNS3 without setting any environment
 variable.
@@ -81,6 +81,8 @@ You can find informations on cEOS at:
 * <https://eos.arista.com/ceos-lab-in-gns3/>
 * <https://eos.arista.com/veos-ceos-gns3-labs/>
 * <https://eos.arista.com/ceos-lab-topo/>
+  * <https://eos.arista.com/arista-robot-testing/>
+  * <https://eos.arista.com/network-ci-part-3/>
 
 This entrypoint was inspired by the containerlab cEOS container manager
 (except this script runs inside the container):
@@ -88,20 +90,68 @@ This entrypoint was inspired by the containerlab cEOS container manager
 * <https://containerlab.srlinux.dev/manual/kinds/ceos/>
 * <https://github.com/srl-labs/containerlab/blob/v0.19.0/nodes/ceos/ceos.go>
 
-### About `ceos-console-cli.service`
+### License
+
+This project is released under [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0)
+([SPDX](https://spdx.org/licenses/Apache-2.0.html)).
+
+### Systemd units for the console
+
+#### About `ceos-console-getty.service` vs `ceos-console-cli.service`
+
+It is possible to spawn a prompt on the console in 2 ways, with their own
+advantages:
+
+* for `getty` (enabled by default):
+  * users logins are logged and correctly listed in `show users detail`
+  * having a login prompt allows to test authentication (local and external
+    sources, like TACACS+, ..)
+  * (technical: Python doesn't own the console handle, it only spawn the process
+    which will)
+* for `Cli`:
+  * since it spawn a full privilege `admin` shell, it provides an easy backup /
+    backdoor access
+    * such backup access can also be provided using
+      `docker exec -it my_container Cli -p 15` if required
+
+`mingetty` can be configured to enable autologin (see
+`ceos-console-getty.service`) but the shell is unprivileged by default.
+
+#### About `ceos-console-cli-systemd.service` and `ceos-console-getty-systemd.service`
 
 `Cli` could be (re)launched directly by `init/systemd`, but inside the container
 systemd is complaining about the dependencies of a dozen units each time this
 unit starts, so instead Python is used to handle the restart without spamming
 the console.
 
-The alternative unit launching `Cli` directly is left if you prefer it however,
-or want to try to fix the messages ; adjust the `Dockerfile` in consequence to
-use it.
+The alternative units launching `Cli` or `Agetty` directly are left if you
+prefer them however, or want to try to fix the messages ; adjust the
+`Dockerfile` in consequence to use them.
 
-### License
+#### Arista unit `serial-getty@ttyS0.service`
 
-This project is released under [Apache 2.0 license](https://spdx.org/licenses/Apache-2.0.html).
+While this unit was not designed for a container console, it could be hijacked
+for the console, but would suffers the systemd messages issues, plus a
+dependency to `dev-console.device` which is never met. It is also missing an
+`Install` section.
+
+To test:
+
+```sh
+cp -a "/etc/systemd/system/serial-getty@ttyS0.service" "/etc/systemd/system/multi-user.target.wants/serial-getty@console.service"
+```
+
+#### Native units `container-getty@.service`, `getty@.service`
+
+The native units suffers the same systemd messages, plus `getty.target` missing.
+This one can be restored by putting <https://github.com/systemd/systemd/blob/v219/units/getty.target>
+at `/usr/lib/systemd/system/getty.target`.
+
+The `getty` unit can then be enabled using `systemctl enable getty@console`, but
+it will display the prompt before EOS finished booting.
+
+The `container-getty` can also be started using `systemctl start container-getty@0`
+but it is missing an `Install` section.
 
 ### Entrypoint script arguments
 
@@ -156,6 +206,11 @@ optional arguments:
 ```
 
 ### Resources
+
+Some Arista resources:
+
+* <https://eos.arista.com/forum/can-ceos-inherit-docker-assigned-ip-address-on-management-interface/>
+* <https://eos.arista.com/mlag-basic-configuration/>
 
 Some resources used to construct this:
 
@@ -231,3 +286,9 @@ Some resources used to construct this:
 * Linux interfaces
   * <https://unix.stackexchange.com/questions/451368/allowed-chars-in-linux-network-interface-names>
   * <https://access.redhat.com/solutions/652593>
+* getty
+  * <https://linux.die.net/man/8/mingetty>
+  * <https://linux.die.net/man/8/agetty>
+  * <http://0pointer.de/blog/projects/serial-console.html>
+  * <https://www.freedesktop.org/software/systemd/man/systemd-getty-generator.html>
+  * <https://man7.org/linux/man-pages/man2/setsid.2.html>

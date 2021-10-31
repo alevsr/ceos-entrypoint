@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Usage:
-# > CEOS_64=64 CEOS_EDITION=lab CEOS_VERSION=4.26.1F
+# > CEOS_64=64 CEOS_EDITION=lab CEOS_VERSION=4.27.0F
 # > docker build \
 #   --build-arg "CEOS_64=${CEOS_64}" \
 #   --build-arg "CEOS_EDITION=${CEOS_EDITION}" \
@@ -14,7 +14,8 @@
 FROM scratch
 ARG CEOS_64=64
 ARG CEOS_EDITION=lab
-ARG CEOS_VERSION=4.26.1F
+ARG CEOS_VERSION=4.27.0F
+ARG CONSOLE=getty
 
 ADD cEOS${CEOS_64}-${CEOS_EDITION}-${CEOS_VERSION}.tar /
 
@@ -31,12 +32,16 @@ ADD cEOS${CEOS_64}-${CEOS_EDITION}-${CEOS_VERSION}.tar /
 VOLUME /mnt/flash
 
 COPY ceos_entrypoint.py \
-     ceos-entrypoint-cli.service \
+     ceos-console-cli.service \
+     ceos-console-getty.service \
      /
 
 RUN chmod +x /ceos_entrypoint.py \
-    && mv /ceos-entrypoint-cli.service /etc/systemd/system/ \
-    && systemctl enable ceos-entrypoint-cli \
+    && mv \
+        /ceos-console-getty.service \
+        /ceos-console-cli.service \
+        /etc/systemd/system/ \
+    && systemctl enable ceos-console-${CONSOLE} \
     && systemctl mask shutdown.target umount.target
 
 # Don't use STOPSIGNAL SIGRTMIN+3 on privileged container with shutdown.target

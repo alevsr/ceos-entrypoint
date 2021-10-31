@@ -18,6 +18,7 @@
 from __future__ import annotations  # Py >= 3.7
 import sys, argparse, logging, pathlib, re, os, time, subprocess
 
+# EOS required environment variables
 eos_default_environment = {
   'CEOS': '1',
   'EOS_PLATFORM': 'ceoslab',
@@ -28,6 +29,9 @@ eos_default_environment = {
   # 'CEOS_PYTHON': '3',
   'container': 'docker',  # This one is for systemd
 }
+# Console command-lines
+getty_cmdline = ['/usr/sbin/mingetty', '/dev/console', '--noclear']
+cli_cmdline = ['/usr/bin/Cli', '-p', '15']
 
 
 def main():
@@ -84,9 +88,18 @@ def main():
     nargs='*',
     help='Extra arguments to pass to init'
   )
+  arg_subparser_getty = arg_subparsers.add_parser(
+    'run_getty',
+    help="Spawn (min)getty shell on pid1's stdio (container console)"
+  )
+  arg_subparser_getty.add_argument(
+    'getty_arguments',
+    nargs='*',
+    help='Extra arguments to pass to (min)getty'
+  )
   arg_subparser_cli = arg_subparsers.add_parser(
     'run_cli',
-    help="Spawn Cli shell on pid1's stdio (console)"
+    help="Spawn Cli shell on pid1's stdio (container console)"
   )
   arg_subparser_cli.add_argument(
     'cli_arguments',
@@ -107,6 +120,8 @@ def main():
         set_hostname=not args.entrypoint_skip_config_hostname,
       )
       ceos_entrypoint.exec_init(args.init_arguments)
+    elif args.command == 'run_getty':
+      ceos_entrypoint.run_getty_on_console(args.getty_arguments)
     elif args.command == 'run_cli':
       ceos_entrypoint.run_cli_on_console(args.cli_arguments)
   except Exception as e:
@@ -119,11 +134,10 @@ class CEOSEntrypoint:
   CEOS Entrypoint object to handle preparation of the container
   """
 
+  log_file = '/ceos_entrypoint.log'
   ceos_config_path = pathlib.Path('/mnt/flash/ceos-config')
   startup_config_path = pathlib.Path('/mnt/flash/startup-config')
   init_cmdline = ['/sbin/init']
-  cli_cmdline = ['/usr/bin/Cli', '-p', '15']
-  log_file = '/ceos_entrypoint.log'
 
   def __init__(self, debug: bool = False):
     """
@@ -390,21 +404,50 @@ class CEOSEntrypoint:
 
   # ---
 
+  def run_getty_on_console(self, additional_arguments: list):
+    """
+    Spawn (min)getty on /dev/console
+    """
+    # time.sleep(2)  # Handled with systemd.unit type=idle
+    cmdline = getty_cmdline + additional_arguments
+    self.log.info(f'getty cmdline={" ".join(cmdline)}')
+    while True:
+      self.log.info('Spawning getty on /dev/console')
+      subprocess.run(
+        cmdline,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+      )
+      time.sleep(0.5)  # In case called process goes crazy
+
+  # ---
+
   def run_cli_on_console(self, additional_arguments: list):
     """
     Spawn Cli on /dev/console
     """
     # time.sleep(2)  # Handled with systemd.unit type=idle
     import signal
+    cmdline = cli_cmdline + additional_arguments
+    self.log.info(f'Cli cmdline={" ".join(cmdline)}')
     with open('/dev/console', 'rb+', buffering=0) as console_fh:
       while True:
-        self.log.info('Spawning a shell on /dev/console')
+        self.log.info('Spawning Cli on /dev/console')
         console_fh.write(b'\n')
         console_fh.flush()
-        original_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)  # Handle ^C in Cli
-        subprocess.run(self.cli_cmdline + additional_arguments, stdin=console_fh, stdout=console_fh, stderr=subprocess.STDOUT)
+        # Handle ^C in Cli (because Python owns the console handle)
+        original_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        subprocess.run(
+          cmdline,
+          stdin=console_fh,
+          stdout=console_fh,
+          stderr=subprocess.STDOUT,
+          start_new_session=True,
+        )
         signal.signal(signal.SIGINT, original_handler)
-        time.sleep(0.5)  # In case Cli goes crazy
+        time.sleep(0.5)  # In case called process goes crazy
 
 
 if __name__ == '__main__':

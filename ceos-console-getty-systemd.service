@@ -1,0 +1,32 @@
+[Unit]
+Description=***
+#Description=Arista Getty on console
+#Documentation=http://0pointer.de/blog/projects/serial-console.html
+#After=AaaWarmup.service
+After=EosStage3.service
+Wants=EosStage3.service
+#IgnoreOnIsolate=yes
+
+[Service]
+Type=idle
+PassEnvironment=HOSTNAME TERM HOME
+#Environment="TERM=vt100"
+ExecStart=-/usr/sbin/Agetty console
+#RestartSec=0.5
+Restart=always
+StartLimitBurst=100
+StartLimitInterval=300s
+
+#UtmpIdentifier=console
+#TTYPath=/dev/console
+#TTYReset=yes
+#TTYVHangup=yes
+#KillMode=process
+#IgnoreSIGPIPE=no
+
+# Some login implementations ignore SIGTERM, so we send SIGHUP instead, to
+# ensure that login terminates cleanly.
+#KillSignal=SIGHUP
+
+[Install]
+WantedBy=default.target
