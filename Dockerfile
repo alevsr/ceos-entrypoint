@@ -3,21 +3,21 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Usage:
-# > CEOS_64=64 CEOS_EDITION=lab CEOS_VERSION=4.27.0F
+# > CEOS_VERSION=4.27.3F CEOS_64= CEOS_EDITION=lab
 # > docker build \
+#   --build-arg "CEOS_VERSION=${CEOS_VERSION}" \
 #   --build-arg "CEOS_64=${CEOS_64}" \
 #   --build-arg "CEOS_EDITION=${CEOS_EDITION}" \
-#   --build-arg "CEOS_VERSION=${CEOS_VERSION}" \
 #   --tag arista-ceos:${CEOS_EDITION}${CEOS_64}-${CEOS_VERSION} \
 #   --tag arista-ceos:latest .
 
 FROM scratch
-ARG CEOS_64=64
+ARG CEOS_64=
 ARG CEOS_EDITION=lab
-ARG CEOS_VERSION=4.27.0F
+ARG CEOS_VERSION
 ARG CONSOLE=getty
 
-ADD cEOS${CEOS_64}-${CEOS_EDITION}-${CEOS_VERSION}.tar /
+ADD cEOS${CEOS_64}-${CEOS_EDITION}-${CEOS_VERSION}.tar.xz /
 
 # Theses are the defaults used by the entrypoint script ;
 # if required, override them here or at container creation time

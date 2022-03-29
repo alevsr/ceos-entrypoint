@@ -32,22 +32,25 @@ eos_default_environment = {
 # Console command-lines
 getty_cmdline = ['/usr/sbin/mingetty', '/dev/console', '--noclear']
 cli_cmdline = ['/usr/bin/Cli', '-p', '15']
+# Log entrypoint actions in:
+log_file = '/ceos_entrypoint.log'
 
 
 def main():
   arg_parser = argparse.ArgumentParser(
-    description="Entrypoint script used to prepare the container for cEOS "
-                "and facilitate it's use, integration, configuration"
+    description="Entrypoint script used to prepare the container for cEOS and "
+                "facilitate it's use, integration, configuration"
   )
   arg_parser.add_argument(
     '--debug',
     action='store_true',
     help='Enable debug log level',
   )
-  arg_subparsers = arg_parser.add_subparsers(dest='command', required=True, help='command')
+  arg_subparsers = arg_parser.add_subparsers(dest='command', required=True)
   arg_subparser_init = arg_subparsers.add_parser(
     'init_container',
-    help='Prepare (environment variables, interfaces name, system mac, serial number) and init container',
+    help='Prepare (environment variables, interfaces name, system mac, serial '
+         'number) and init container',
   )
   arg_subparser_init.add_argument(
     '--entrypoint-no-interface-rename',
@@ -75,13 +78,22 @@ def main():
     type=CEOSEntrypoint.arg_serial,
     default='ENV_HOSTNAME',
     metavar='SERIALNUMBER',
-    help='Value to set as SERIALNUMBER in ceos-config, '
-    'or "ENV_HOSTNAME" to put the hostname (default) ; no change if empty',
+    help='Value to set as SERIALNUMBER in ceos-config, or "ENV_HOSTNAME" to '
+         'put the hostname (default) ; no change if empty',
   )
   arg_subparser_init.add_argument(
     '--entrypoint-skip-config-hostname',
     action='store_true',
     help="Don't update hostname in the startup-configuration",
+  )
+  arg_subparser_init.add_argument(
+    '--entrypoint-routing-model',
+    choices=('ribd', 'multi-agent', 'force-ribd', 'force-multi-agent'),
+    default='multi-agent',
+    help='Set the routing protocol model in the startup-configuration ; cEOS '
+    'default is "ribd" but this entrypoint defaults it to "multi-agent" ; when '
+    'the "force" prefix is used, configuration is changed even when it already '
+    'exists',
   )
   arg_subparser_init.add_argument(
     'init_arguments',
@@ -117,6 +129,7 @@ def main():
         system_mac=args.entrypoint_system_mac,
         change_system_mac=args.entrypoint_change_system_mac,
         serial=args.entrypoint_serial,
+        routing_model=args.entrypoint_routing_model,
         set_hostname=not args.entrypoint_skip_config_hostname,
       )
       ceos_entrypoint.exec_init(args.init_arguments)
@@ -134,7 +147,6 @@ class CEOSEntrypoint:
   CEOS Entrypoint object to handle preparation of the container
   """
 
-  log_file = '/ceos_entrypoint.log'
   ceos_config_path = pathlib.Path('/mnt/flash/ceos-config')
   startup_config_path = pathlib.Path('/mnt/flash/startup-config')
   init_cmdline = ['/sbin/init']
@@ -144,7 +156,6 @@ class CEOSEntrypoint:
     Initialize object with logger and setup environment
     """
     self.log = self.init_logger(debug)
-    self.interfaces = None
     self.fix_env()
 
   def init_logger(self, debug: bool) -> logging.Logger:
@@ -153,7 +164,7 @@ class CEOSEntrypoint:
     """
     handlers = (
       logging.StreamHandler(stream=sys.stderr),
-      logging.FileHandler(self.log_file, mode='a', encoding='utf8')
+      logging.FileHandler(log_file, mode='a', encoding='utf8')
     )
     formatter = logging.Formatter(
       fmt='{asctime}:{levelname}:{name}:{message}',
@@ -172,7 +183,8 @@ class CEOSEntrypoint:
 
   def fix_env(self) -> os._Environ:
     """
-    Fix environment for all new process
+    Fix environment for the current and new processes, to ensure variables
+    required by EOS are set
     """
     for environment_variable, default_value in eos_default_environment.items():
       if environment_variable not in os.environ or environment_variable == 'container':
@@ -266,17 +278,17 @@ class CEOSEntrypoint:
     Process the system mac argument from choices: random|first|mac|int_name
     """
     arg = arg.strip()
-    if arg.lower() == 'random':
+    if arg.lower() == 'random':  # Random MAC
       return cls.sanitize_mac(os.urandom(6).hex())
-    elif arg.lower() == 'first':
+    elif arg.lower() == 'first':  # MAC of first interface
       interfaces = cls.list_interfaces()
       with pathlib.Path(f'/sys/class/net/{interfaces[0]}/address').open('r') as interface_address_handle:
         return cls.sanitize_mac(re.sub(r'[^0-9a-fA-F]', '', interface_address_handle.read()))
     else:
       hexa_arg = re.sub(r'[^0-9a-fA-F]', '', arg)
-      if len(hexa_arg) == 12:
+      if len(hexa_arg) == 12:  # MAC given as argument
         return cls.sanitize_mac(hexa_arg)
-      else:
+      else:  # MAC from interface name
         if not re.fullmatch(r'[^/\0\s]{1,15}', arg):
           raise argparse.ArgumentTypeError('not a mac address and invalid as interface name')
         try:
@@ -293,7 +305,7 @@ class CEOSEntrypoint:
     Return a mac address with U/L and I/G bits set to 0
     """
     normalized_mac = format(int(mac, 16) & ~0x03_00_00_00_00_00, '012x')
-    mac_bytes = [normalized_mac[i:i+2] for i in range(0, 12, 2)]
+    mac_bytes = [normalized_mac[i:i + 2] for i in range(0, 12, 2)]
     return mac_fmt.format(*mac_bytes)
 
   @classmethod
@@ -319,17 +331,23 @@ class CEOSEntrypoint:
     self,
     system_mac: str,
     serial: str,
+    routing_model: str,
     change_system_mac: bool = False,
-    set_hostname: bool = True
+    set_hostname: bool = True,
   ):
     """
-    Setup/update ceos-config file with system mac and "serial number" (hostname)
+    Setup/update ceos-config file with:
+      * system mac
+      * "serial number" (hostname)
+      * routing model
     """
     # Ensure the file contains a system mac
     valid_system_mac = False
-    if self.ceos_config_path.is_file() and not change_system_mac:
-      with self.ceos_config_path.open('r') as fh:
-        valid_system_mac = bool(re.search(r'^SYSTEMMACADDR=[0-9a-fA-F:.-]{12,17}(?:$|\s+)', fh.read(), re.M))
+    if not change_system_mac:
+      valid_system_mac = self._pattern_in_file(
+        self.ceos_config_path,
+        r'^SYSTEMMACADDR=[0-9a-fA-F:.-]{12,17}(?:$|\s+)'
+      )
     if not valid_system_mac:
       self.log.info(f'ceos-config: setting SYSTEMMACADDR={system_mac!r}')
       self._replace_append_line_in_file(self.ceos_config_path, 'SYSTEMMACADDR=', system_mac)
@@ -352,7 +370,35 @@ class CEOSEntrypoint:
     else:
       self.log.warning('Container hostname not found in environment variables')
 
-  def _replace_append_line_in_file(self, file: pathlib.Path, prefix: str, value: str):
+    set_routing_model = True
+    # Check if the startup-config already contains a routing model configuration
+    if not routing_model.startswith('force-'):
+      set_routing_model = not self._pattern_in_file(
+        self.startup_config_path,
+        r'^service routing protocols model \S+(?:$|\s+)'
+      )
+    if set_routing_model:
+      self.log.info(f'startup-config: setting service routing protocols model to {routing_model!r}')
+      self._replace_append_line_in_file(
+        self.startup_config_path,
+        'service routing protocols model ',
+        routing_model.replace('force-', '')
+      )
+    else:
+      self.log.info('startup-config: service routing protocols model untouched')
+
+  @staticmethod
+  def _pattern_in_file(file: pathlib.Path, pattern: str):
+    """
+    Check if pattern is found in file
+    """
+    if not file.is_file():
+      return False
+    with file.open('r') as fh:
+      return bool(re.search(pattern, fh.read(), re.M))
+
+  @staticmethod
+  def _replace_append_line_in_file(file: pathlib.Path, prefix: str, value: str):
     """
     Replace the first line beginning with `prefix` with `prefix+value`,
     or add the line at the end of the file

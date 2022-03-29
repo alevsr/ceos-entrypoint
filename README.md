@@ -3,14 +3,18 @@
 ## Description
 
 Arista provides cEOS, a containerized version of EOS, in a `lab` edition for
-educational purpose. But this version is provided in the raw `tar` format which
-requires setting proper and mandatory environment variables to be usable, plus
-generating one value in `/mnt/flash/ceos-config` and renaming the interfaces to
-have some features to be fully functional.
+educational purpose. But this version is provided in the raw `tar.xz` format
+which requires setting proper and mandatory environment variables to be usable,
+plus generating one value in `/mnt/flash/ceos-config` and renaming the
+interfaces to have some features to be fully functional.
 
 The native launch sequence looks like:
 
 ```sh
+# Create the image
+docker import cEOS-lab-4.27.3F.tar.xz ceosimage:4.27.3F
+
+# Create the container, setting all required variables
 docker create \
   --name=my_ceos --privileged -i -t \
   -e CEOS=1 \
@@ -19,7 +23,7 @@ docker create \
   -e ETBA=1 \
   -e SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1 \
   -e container=docker \
-  ceosimage:4.27.0F \
+  ceosimage:4.27.3F \
   /sbin/init \
     systemd.setenv=CEOS=1 \
     systemd.setenv=EOS_PLATFORM=ceoslab \
@@ -28,11 +32,14 @@ docker create \
     systemd.setenv=SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1 \
     systemd.setenv=container=docker
 
+# Start the container
+docker start my_ceos
+
 # Then to get the Cli prompt:
 docker exec -it my_ceos Cli
 
-# Then you need to generate a proper `system mac` (and it's a bit late to rename
-# interfaces)
+# Then you need to generate a proper `system mac`, `serial number`, set the
+# `hostname` (and it's a bit late to rename interfaces)
 ```
 
 This entrypoint allows to build an out-of-the-box working image, taking care of:
@@ -47,15 +54,15 @@ to work at least)
 * setting the `hostname`
 * spawning continuously a prompt (`Cli`) on the console after the boot
 
-## How to build
+## How to build and use
 
-To build the image, place the cEOS `tar` file from Arista in the build context
-(ie. this directory) then use the following snippet:
+To build the image, place the cEOS `tar.xz` file from Arista in the build
+context (ie. this directory) then use the following snippet:
 
 ```sh
-CEOS_64=64  # or `CEOS_64=` for the 32bit variant
+CEOS_VERSION=4.27.3F
+CEOS_64=  # or `CEOS_64=64` for the 64bit variant
 CEOS_EDITION=lab
-CEOS_VERSION=4.27.0F
 docker build \
   --build-arg "CEOS_64=${CEOS_64}" \
   --build-arg "CEOS_EDITION=${CEOS_EDITION}" \
@@ -65,10 +72,14 @@ docker build \
 ```
 
 This will build an image tagged twice: one with the version
-(`arista-ceos:lab64-4.27.0F` here) and one latest (`arista-ceos:latest`).
+(`arista-ceos:lab-4.27.3F` here) and one latest (`arista-ceos:latest`).
 
-The built image can be used directly in GNS3 without setting any environment
-variable.
+The built image can be used without setting any environment variable, directly
+in GNS3, or manually, not requiring to launch `Cli` separately:
+
+```sh
+docker run --name my_ceos --privileged --interactive --tty arista-ceos:latest
+```
 
 ## How to use in GNS3
 
@@ -88,16 +99,85 @@ You can find informations on cEOS at:
   * <https://eos.arista.com/arista-robot-testing/>
   * <https://eos.arista.com/network-ci-part-3/>
 
-This entrypoint was inspired by the containerlab cEOS container manager
-(except this script runs inside the container):
+This entrypoint was inspired by the [containerlab](https://containerlab.dev/)
+cEOS container manager (except this script runs inside the container):
 
-* <https://containerlab.srlinux.dev/manual/kinds/ceos/>
+* <https://containerlab.dev/manual/kinds/ceos/>
 * <https://github.com/srl-labs/containerlab/blob/v0.19.0/nodes/ceos/ceos.go>
 
 ### License
 
 This project is released under [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0)
 ([SPDX](https://spdx.org/licenses/Apache-2.0.html)).
+
+### Entrypoint script arguments
+
+```text
+$ python ceos_entrypoint.py -h
+usage: ceos_entrypoint.py [-h] [--debug] {init_container,run_getty,run_cli} ...
+
+Entrypoint script used to prepare the container for cEOS and facilitate it's use, integration, configuration
+
+positional arguments:
+  {init_container,run_getty,run_cli}
+    init_container      Prepare (environment variables, interfaces name, system mac, serial number) and init container
+    run_getty           Spawn (min)getty shell on pid1's stdio (container console)
+    run_cli             Spawn Cli shell on pid1's stdio (container console)
+
+options:
+  -h, --help            show this help message and exit
+  --debug               Enable debug log level
+```
+
+```text
+$ python ceos_entrypoint.py init_container -h
+usage: ceos_entrypoint.py init_container [-h] [--entrypoint-no-interface-rename] [--entrypoint-system-mac random|first|ab12.cd34.ef56|etX] [--entrypoint-change-system-mac]
+                                         [--entrypoint-serial SERIALNUMBER] [--entrypoint-skip-config-hostname]
+                                         [--entrypoint-routing-model {ribd,multi-agent,force-ribd,force-multi-agent}]
+                                         [init_arguments ...]
+
+positional arguments:
+  init_arguments        Extra arguments to pass to init
+
+options:
+  -h, --help            show this help message and exit
+  --entrypoint-no-interface-rename
+                        Don't try to rename interfaces to match INTFTYPE
+  --entrypoint-system-mac random|first|ab12.cd34.ef56|etX
+                        Value to use to set SYSTEMMAC ; accepted values are: "random" to generate a random MAC", "first" to use the mac-address of the first interface, a mac-      
+                        address, an interface name (after rename) which mac-address will be read
+  --entrypoint-change-system-mac
+                        Change SYSTEMMAC in ceos-config after it has been set on first start
+  --entrypoint-serial SERIALNUMBER
+                        Value to set as SERIALNUMBER in ceos-config, or "ENV_HOSTNAME" to put the hostname (default) ; no change if empty
+  --entrypoint-skip-config-hostname
+                        Don't update hostname in the startup-configuration
+  --entrypoint-routing-model {ribd,multi-agent,force-ribd,force-multi-agent}
+                        Set the routing protocol model in the startup-configuration ; cEOS default is "ribd" but this entrypoint defaults it to "multi-agent" ; when the "force"    
+                        prefix is used, configuration is changed even when it already exists
+```
+
+```text
+$ python ceos_entrypoint.py run_cli -h
+usage: ceos_entrypoint.py run_cli [-h] [cli_arguments ...]
+
+positional arguments:
+  cli_arguments  Extra arguments to pass to Cli
+
+options:
+  -h, --help     show this help message and exit
+```
+
+```text
+$ python ceos_entrypoint.py run_getty -h
+usage: ceos_entrypoint.py run_getty [-h] [getty_arguments ...]
+
+positional arguments:
+  getty_arguments  Extra arguments to pass to (min)getty
+
+options:
+  -h, --help       show this help message and exit
+```
 
 ### Systemd units for the console
 
@@ -128,7 +208,7 @@ systemd is complaining about the dependencies of a dozen units each time this
 unit starts, so instead Python is used to handle the restart without spamming
 the console.
 
-The alternative units launching `Cli` or `Agetty` directly are left if you
+The alternative units launching `Cli` or `Agetty` directly are kept if you
 prefer them however, or want to try to fix the messages ; adjust the
 `Dockerfile` in consequence to use them.
 
@@ -156,58 +236,6 @@ it will display the prompt before EOS finished booting.
 
 The `container-getty` can also be started using `systemctl start container-getty@0`
 but it is missing an `Install` section.
-
-### Entrypoint script arguments
-
-```text
-$ python ceos_entrypoint.py -h
-usage: ceos_entrypoint.py [-h] [--debug] {init_container,run_cli} ...
-
-Entrypoint script used to prepare the container for cEOS and facilitate it's use, integration, configuration
-
-positional arguments:
-  {init_container,run_cli}
-                        command
-    init_container      Prepare (environment variables, interfaces name, system mac, serial number) and init container
-    run_cli             Spawn Cli shell on pid1's stdio (console)
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --debug               Enable debug log level
-
-
-$ python ceos_entrypoint.py init_container -h
-usage: ceos_entrypoint.py init_container [-h] [--entrypoint-no-interface-rename] [--entrypoint-system-mac random|first|ab12.cd34.ef56|etX] [--entrypoint-change-system-mac]
-                                         [--entrypoint-serial SERIALNUMBER] [--entrypoint-skip-config-hostname]
-                                         [init_arguments ...]
-
-positional arguments:
-  init_arguments        Extra arguments to pass to init
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --entrypoint-no-interface-rename
-                        Don't try to rename interfaces to match INTFTYPE
-  --entrypoint-system-mac random|first|ab12.cd34.ef56|etX
-                        Value to use to set SYSTEMMAC ; accepted values are: "random" to generate a random MAC", "first" to use the mac-address of the first interface, a mac-
-                        address, an interface name (after rename) which mac-address will be read
-  --entrypoint-change-system-mac
-                        Change SYSTEMMAC in ceos-config after it has been set on first start
-  --entrypoint-serial SERIALNUMBER
-                        Value to set as SERIALNUMBER in ceos-config, or "ENV_HOSTNAME" to put the hostname (default) ; no change if empty
-  --entrypoint-skip-config-hostname
-                        Don't update hostname in the startup-configuration
-
-
-$ python ceos_entrypoint.py run_cli -h
-usage: ceos_entrypoint.py run_cli [-h] [cli_arguments ...]
-
-positional arguments:
-  cli_arguments  Extra arguments to pass to Cli
-
-optional arguments:
-  -h, --help     show this help message and exit
-```
 
 ### Resources
 
